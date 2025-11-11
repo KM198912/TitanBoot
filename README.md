@@ -1,5 +1,7 @@
 # TitanBoot — Custom x86 BIOS Bootloader
 
+[![Build](https://github.com/KM198912/TitanBoot/actions/workflows/build.yml/badge.svg)](https://github.com/KM198912/TitanBoot/actions/workflows/build.yml)
+
 A custom x86 bootloader with VBE graphics support, E820 memory detection, and Multiboot-style boot information passing.
 
 ## Features
