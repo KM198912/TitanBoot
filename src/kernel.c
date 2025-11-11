@@ -309,11 +309,23 @@ void kernel_main(boot_info_t* boot_info) {
         serial_printf("Framebuffer Information:\n");
         serial_printf("  Address: %x\n", boot_info->framebuffer.address);
         serial_printf("  Resolution: %dx%d\n", boot_info->framebuffer.width, boot_info->framebuffer.height);
+        serial_printf("  Pitch: %d\n", boot_info->framebuffer.pitch);
         serial_printf("  BPP: %d\n", boot_info->framebuffer.bpp);
-        serial_printf("  Type: %d (%s)\n\n", boot_info->framebuffer.type,
+        serial_printf("  Type: %d (%s)\n", boot_info->framebuffer.type,
             boot_info->framebuffer.type == 0 ? "Indexed" :
             boot_info->framebuffer.type == 1 ? "RGB" :
             boot_info->framebuffer.type == 2 ? "Text" : "Unknown");
+        
+        // If RGB mode, show color mask info
+        if (boot_info->framebuffer.type == 1) {
+            serial_printf("  Red:   mask_size=%d, position=%d\n", 
+                boot_info->framebuffer.red_mask_size, boot_info->framebuffer.red_position);
+            serial_printf("  Green: mask_size=%d, position=%d\n", 
+                boot_info->framebuffer.green_mask_size, boot_info->framebuffer.green_position);
+            serial_printf("  Blue:  mask_size=%d, position=%d\n", 
+                boot_info->framebuffer.blue_mask_size, boot_info->framebuffer.blue_position);
+        }
+        serial_printf("\n");
         
         write_string("Framebuffer Information:", row++, 0, 0x0F);
         
@@ -339,16 +351,6 @@ void kernel_main(boot_info_t* boot_info) {
         else if (boot_info->framebuffer.type == 2) write_string("Text", row, 22, 0x07);
         row++;
         
-        row++;
-    }
-    
-    // ACPI RSDP info (if available)
-    if (boot_info->flags & 0x2000) {
-        serial_printf("ACPI RSDP Address: %x\n\n", boot_info->rsdp_addr);
-        
-        write_string("ACPI RSDP Address: ", row, 0, 0x0F);
-        hex_to_string(boot_info->rsdp_addr, buffer);
-        write_string(buffer, row++, 19, 0x07);
         row++;
     }
     

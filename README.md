@@ -183,6 +183,10 @@ The E820 memory map provides detailed information about system memory regions:
 
 Each entry contains a 64-bit base address and length, supporting systems with >4GB RAM.
 
+### ACPI RSDP
+
+The bootloader does not pass ACPI information to the kernel. Operating systems can locate the RSDP themselves using the standard ACPI method — scanning the EBDA (Extended BIOS Data Area) and the `0xE0000–0xFFFFF` region for the `"RSD PTR "` signature.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.

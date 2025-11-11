@@ -62,9 +62,6 @@ typedef struct {
     
     // Framebuffer (flags & 0x1000)
     framebuffer_info_t framebuffer;
-    
-    // ACPI RSDP (flags & 0x2000)
-    uint32_t rsdp_addr;   // Physical address of RSDP
 } __attribute__((packed)) boot_info_t;
 
 // Flag definitions
@@ -74,7 +71,6 @@ typedef struct {
 #define BOOT_INFO_FLAG_MODS     0x00000008  // modules valid
 #define BOOT_INFO_FLAG_MMAP     0x00000040  // E820 memory map valid
 #define BOOT_INFO_FLAG_FB       0x00001000  // framebuffer info valid
-#define BOOT_INFO_FLAG_RSDP     0x00002000  // RSDP address valid
 
 // E820 Memory types
 #define E820_RAM        1  // Usable RAM

@@ -38,9 +38,6 @@ start:
     ; Detect memory (also initializes boot_info structure)
     call detect_memory
     
-    ; Find ACPI RSDP (must be after detect_memory initializes boot_info)
-    call find_rsdp
-    
     ; Set up VESA framebuffer
     call setup_framebuffer
 
@@ -112,160 +109,6 @@ load_kernel:
 ; Find ACPI RSDP (Root System Description Pointer)
 ; RSDP signature is "RSD PTR " (8 bytes)
 ; Located in EBDA (Extended BIOS Data Area) or 0xE0000-0xFFFFF
-find_rsdp:
-    mov si, msg_rsdp
-    call print_string
-    
-    push es
-    push ds
-    
-    ; Set DS to 0 for accessing BIOS data area
-    xor ax, ax
-    mov ds, ax
-    
-    ; First, search EBDA (Extended BIOS Data Area)
-    ; EBDA physical address is stored at 0x040E (word, in segments)
-    mov ax, [0x040E]        ; Get EBDA segment
-    test ax, ax
-    jz .search_high         ; If 0, skip to high memory search
-    
-    ; EBDA found, search first 1KB
-    mov es, ax
-    xor di, di
-    mov cx, 1024 / 16       ; Search first 1KB of EBDA (64 iterations)
-    call .search_region
-    cmp eax, 0
-    jne .found
-    
-.search_high:
-    ; Search 0xE0000 to 0xFFFFF (BIOS ROM area, 128KB)
-    mov ax, 0xE000
-    mov es, ax
-    xor di, di
-    mov cx, 0x20000 / 16    ; 128KB / 16 bytes per iteration = 8192 iterations
-    call .search_region
-    cmp eax, 0
-    jne .found
-    
-    ; QEMU fallback: Check known SeaBIOS RSDP locations
-    ; Try 0xF5AD0 (common location)
-    mov ax, 0xF000
-    mov es, ax
-    mov di, 0x5AD0
-    mov eax, [es:di]
-    cmp eax, 0x20445352         ; "RSD "
-    jne .try_alt1
-    mov eax, [es:di+4]
-    cmp eax, 0x20525450         ; "PTR "
-    jne .try_alt1
-    mov eax, 0xF5AD0
-    jmp .found
-    
-.try_alt1:
-    ; Try 0xF6C30 (alternate location)
-    mov di, 0x6C30
-    mov eax, [es:di]
-    cmp eax, 0x20445352
-    jne .try_alt2
-    mov eax, [es:di+4]
-    cmp eax, 0x20525450
-    jne .try_alt2
-    mov eax, 0xF6C30
-    jmp .found
-    
-.try_alt2:
-    ; Try 0xF0000 (another location)
-    mov di, 0x0000
-    mov eax, [es:di]
-    cmp eax, 0x20445352
-    jne .not_found
-    mov eax, [es:di+4]
-    cmp eax, 0x20525450
-    jne .not_found
-    mov eax, 0xF0000
-    jmp .found
-    
-.not_found:
-    ; Not found - restore registers and return
-    pop ds
-    pop es
-    ret
-
-.found:
-    ; EAX contains the physical address of RSDP
-    ; Store in boot_info structure (need ES=0 to access BOOT_INFO)
-    push eax
-    xor ax, ax
-    mov es, ax
-    pop eax
-    
-    mov [es:BOOT_INFO + 52], eax    ; rsdp_addr at offset 52
-    or dword [es:BOOT_INFO], 0x2000 ; Set RSDP flag
-    
-    pop ds
-    pop es
-    ret
-
-; Search for RSDP in ES:DI region
-; CX = number of 16-byte paragraphs to search
-; Returns: EAX = physical address if found, 0 if not found
-.search_region:
-   push si
-    push di
-    push cx
-    push bx
-    
-.search_loop:
-    ; Check for "RSD PTR " signature (8 bytes)
-    mov eax, [es:di]
-    cmp eax, 0x20445352         ; "RSD " (little-endian)
-    jne .next
-    mov eax, [es:di+4]
-    cmp eax, 0x20525450         ; "PTR " (little-endian)
-    jne .next
-    
-    ; Found signature! For debugging, skip checksum for now
-    ; TODO: Re-enable checksum verification
-    ; push cx
-    ; push di
-    ; xor bl, bl                  ; BL = checksum accumulator
-    ; mov cx, 20                  ; RSDP 1.0 is 20 bytes
-; .checksum_loop:
-    ; mov al, [es:di]
-    ; add bl, al
-    ; inc di
-    ; loop .checksum_loop
-    ; pop di
-    ; pop cx
-    
-    ; test bl, bl                 ; Checksum should be 0
-    ; jnz .next
-    
-    ; Found valid RSDP! Calculate physical address
-    xor eax, eax
-    mov ax, es
-    shl eax, 4
-    movzx ebx, di
-    add eax, ebx
-    
-    pop bx
-    pop cx
-    pop di
-    pop si
-    ret
-
-.next:
-    add di, 16                  ; RSDP is 16-byte aligned
-    dec cx
-    jnz .search_loop
-    
-    xor eax, eax                ; Not found
-    pop bx
-    pop cx
-    pop di
-    pop si
-    ret
-
 ; Detect memory using BIOS INT 0x15, E820
 detect_memory:
     mov si, msg_memory
@@ -486,6 +329,12 @@ setup_vbe:
     ; +18: width in pixels
     ; +20: height in pixels
     ; +25: bits per pixel
+    ; +31: red mask size
+    ; +32: red field position
+    ; +33: green mask size
+    ; +34: green field position
+    ; +35: blue mask size
+    ; +36: blue field position
     ; +40: physical base pointer (framebuffer address)
     
     ; Framebuffer structure now starts at offset 36 in boot_info
@@ -514,6 +363,31 @@ setup_vbe:
     
     ; Set type to RGB (1)
     mov byte [BOOT_INFO + 53], 1    ; framebuffer.type at offset 53
+    
+    ; Get RGB mask information
+    ; red_position (offset 54)
+    mov al, [0x5200 + 32]
+    mov [BOOT_INFO + 54], al
+    
+    ; red_mask_size (offset 55)
+    mov al, [0x5200 + 31]
+    mov [BOOT_INFO + 55], al
+    
+    ; green_position (offset 56)
+    mov al, [0x5200 + 34]
+    mov [BOOT_INFO + 56], al
+    
+    ; green_mask_size (offset 57)
+    mov al, [0x5200 + 33]
+    mov [BOOT_INFO + 57], al
+    
+    ; blue_position (offset 58)
+    mov al, [0x5200 + 36]
+    mov [BOOT_INFO + 58], al
+    
+    ; blue_mask_size (offset 59)
+    mov al, [0x5200 + 35]
+    mov [BOOT_INFO + 59], al
     
     clc                 ; Clear carry = success
     ret
@@ -801,7 +675,6 @@ DATA_SEG equ gdt_data - gdt_start
 
 ; Data
 msg_loader: db 'Stage 2 loaded', 0x0D, 0x0A, 0
-msg_rsdp: db 'Finding ACPI RSDP...', 0x0D, 0x0A, 0
 msg_memory: db 'Detecting memory...', 0x0D, 0x0A, 0
 msg_vesa: db 'Setting up graphics...', 0x0D, 0x0A, 0
 msg_vbe_fallback: db 'VBE failed, using text mode', 0x0D, 0x0A, 0
