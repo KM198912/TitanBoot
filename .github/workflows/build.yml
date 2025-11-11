@@ -120,8 +120,19 @@ jobs:
           -debugcon stdio \
           -display none \
           -m 256M \
-          || true
+          > qemu.log 2>&1 || true
         echo "QEMU test completed (timed out as expected)"
+        
+    - name: Verify boot success
+      run: |
+        if grep -q "System ready. Kernel running in protected mode." qemu.log; then
+          echo "✓ Bootloader successfully booted and kernel is running!"
+        else
+          echo "✗ Boot verification failed - success message not found"
+          echo "QEMU output:"
+          cat qemu.log
+          exit 1
+        fi
         
     - name: Test ISO boot with QEMU (timeout)
       run: |
@@ -131,5 +142,16 @@ jobs:
           -debugcon stdio \
           -display none \
           -m 256M \
-          || true
+          > qemu-iso.log 2>&1 || true
         echo "ISO test completed (timed out as expected)"
+        
+    - name: Verify ISO boot success
+      run: |
+        if grep -q "System ready. Kernel running in protected mode." qemu-iso.log; then
+          echo "✓ ISO boot successful and kernel is running!"
+        else
+          echo "✗ ISO boot verification failed - success message not found"
+          echo "QEMU output:"
+          cat qemu-iso.log
+          exit 1
+        fi
