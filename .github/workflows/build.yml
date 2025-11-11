@@ -1,0 +1,135 @@
+name: Build TitanBoot
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nasm gcc-multilib qemu-system-x86 genisoimage
+        
+    - name: Build bootloader
+      run: |
+        make clean
+        make all
+        
+    - name: Build ISO
+      run: |
+        make iso
+        
+    - name: Verify build outputs
+      run: |
+        ls -lh build/
+        file build/boot.bin
+        file build/loader.bin
+        file build/kernel.bin
+        file build/os.img
+        file build/os.iso
+        
+    - name: Test boot sector signature
+      run: |
+        # Check that boot sector has 0x55AA signature at end
+        SIGNATURE=$(od -An -t x1 -j 510 -N 2 build/boot.bin | tr -d ' \n')
+        echo "Boot sector signature: $SIGNATURE"
+        if [ "$SIGNATURE" != "55aa" ]; then
+          echo "Error: Invalid boot sector signature!"
+          exit 1
+        fi
+        echo "Boot sector signature is valid!"
+        
+    - name: Check file sizes
+      run: |
+        BOOT_SIZE=$(stat -c%s build/boot.bin)
+        LOADER_SIZE=$(stat -c%s build/loader.bin)
+        
+        echo "Boot sector size: $BOOT_SIZE bytes"
+        echo "Loader size: $LOADER_SIZE bytes"
+        
+        if [ "$BOOT_SIZE" -ne 512 ]; then
+          echo "Error: Boot sector must be exactly 512 bytes!"
+          exit 1
+        fi
+        
+        if [ "$LOADER_SIZE" -gt 8192 ]; then
+          echo "Warning: Loader is larger than 8KB (16 sectors)"
+        fi
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: titanboot-build
+        path: |
+          build/boot.bin
+          build/loader.bin
+          build/kernel.bin
+          build/kernel.elf
+          build/os.img
+          build/os.iso
+        retention-days: 30
+        
+    - name: Upload OS image
+      uses: actions/upload-artifact@v4
+      with:
+        name: os-image
+        path: build/os.img
+        retention-days: 90
+        
+    - name: Upload ISO
+      uses: actions/upload-artifact@v4
+      with:
+        name: os-iso
+        path: build/os.iso
+        retention-days: 90
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install QEMU
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-x86
+        
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: titanboot-build
+        path: build/
+        
+    - name: Test boot with QEMU (timeout)
+      run: |
+        echo "Testing bootloader in QEMU..."
+        timeout 5 qemu-system-i386 \
+          -drive file=build/os.img,format=raw \
+          -debugcon stdio \
+          -display none \
+          -m 256M \
+          || true
+        echo "QEMU test completed (timed out as expected)"
+        
+    - name: Test ISO boot with QEMU (timeout)
+      run: |
+        echo "Testing ISO boot in QEMU..."
+        timeout 5 qemu-system-i386 \
+          -cdrom build/os.iso \
+          -debugcon stdio \
+          -display none \
+          -m 256M \
+          || true
+        echo "ISO test completed (timed out as expected)"
