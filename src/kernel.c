@@ -342,6 +342,65 @@ void kernel_main(boot_info_t* boot_info) {
         row++;
     }
     
+    // ACPI RSDP info (if available)
+    if (boot_info->flags & 0x2000) {
+        serial_printf("ACPI RSDP Address: %x\n\n", boot_info->rsdp_addr);
+        
+        write_string("ACPI RSDP Address: ", row, 0, 0x0F);
+        hex_to_string(boot_info->rsdp_addr, buffer);
+        write_string(buffer, row++, 19, 0x07);
+        row++;
+    }
+    
+    // Module info (if available)
+    if (boot_info->flags & 0x08) {
+        module_info_t* modules = (module_info_t*)boot_info->mods_addr;
+        uint32_t count = boot_info->mods_count;
+        
+        serial_printf("Modules Loaded (%d):\n", count);
+        for (uint32_t i = 0; i < count; i++) {
+            serial_printf("  [%d] Start: %x  End: %x  Name: %x\n",
+                i,
+                modules[i].mod_start,
+                modules[i].mod_end,
+                modules[i].string);
+            
+            // Try to print module name if valid pointer
+            if (modules[i].string >= 0x5000 && modules[i].string < 0x10000) {
+                const char* name = (const char*)modules[i].string;
+                serial_printf("       Name: %s\n", name);
+            }
+        }
+        serial_printf("\n");
+        
+        write_string("Modules Loaded: ", row, 0, 0x0F);
+        int_to_string(count, buffer);
+        write_string(buffer, row++, 16, 0x0E);
+        
+        // Show modules on screen (limit to prevent overflow)
+        uint32_t display_count = count;
+        if (row + display_count > 24) display_count = 24 - row;
+        
+        for (uint32_t i = 0; i < display_count; i++) {
+            write_string("  [", row, 0, 0x07);
+            int_to_string(i, buffer);
+            write_string(buffer, row, 3, 0x07);
+            write_string("] ", row, 3 + strlen(buffer), 0x07);
+            
+            hex_to_string(modules[i].mod_start, buffer);
+            write_string(buffer, row, 6, 0x07);
+            
+            write_string("-", row, 16, 0x07);
+            
+            hex_to_string(modules[i].mod_end, buffer);
+            write_string(buffer, row, 17, 0x07);
+            
+            row++;
+        }
+        
+        row++;
+    }
+    
     write_string("System ready. Kernel running in protected mode.", row++, 0, 0x0E);
     
     serial_printf("System ready. Kernel running in protected mode.\n");

@@ -28,19 +28,36 @@ start:
     mov si, msg_loading
     call print_string
 
-    ; Load Stage 2 loader from disk
-    ; Read sectors starting after boot sector
+    ; Try LBA first, fall back to CHS if needed
+    ; Check if LBA is available
+    mov ah, 0x41        ; Check extensions present
+    mov bx, 0x55AA
+    mov dl, [boot_drive]
+    int 0x13
+    jc .use_chs         ; No LBA support, use CHS
+    cmp bx, 0xAA55      ; Check if extensions installed
+    jne .use_chs
+    
+    ; Load using LBA (INT 13h Extensions)
+    mov si, dap         ; DS:SI = Disk Address Packet
+    mov ah, 0x42        ; Extended read
+    mov dl, [boot_drive]
+    int 0x13
+    jnc .read_success   ; Success, continue
+    
+.use_chs:
+    ; Fall back to CHS read (legacy BIOS)
     mov ah, 0x02        ; BIOS read sector function
     mov al, 16          ; Number of sectors to read (8KB loader)
     mov ch, 0           ; Cylinder 0
     mov cl, 2           ; Start at sector 2 (sector 1 is boot sector)
     mov dh, 0           ; Head 0
-    mov dl, [boot_drive]; Drive number (saved by BIOS)
-    mov bx, 0x7E00      ; Load to address 0x7E00 (right after boot sector)
-    int 0x13            ; Call BIOS
-    
+    mov dl, [boot_drive]; Drive number
+    mov bx, 0x7E00      ; Load to address 0x7E00
+    int 0x13
     jc disk_error       ; Jump if carry flag set (error)
 
+.read_success:
     ; Print success message
     mov si, msg_success
     call print_string
@@ -73,6 +90,17 @@ print_string:
 
 ; Data
 boot_drive: db 0
+
+; Disk Address Packet (DAP) for LBA reads
+align 4
+dap:
+    db 0x10             ; Size of DAP (16 bytes)
+    db 0                ; Reserved (0)
+    dw 16               ; Number of sectors to read (8KB loader)
+    dw 0x7E00           ; Offset to load to
+    dw 0                ; Segment to load to
+    dq 1                ; LBA start sector (sector 1 = second sector, after boot sector)
+
 msg_loading: db 'Loading...', 0x0D, 0x0A, 0
 msg_success: db 'OK', 0x0D, 0x0A, 0
 msg_error: db 'Disk error!', 0x0D, 0x0A, 0
