@@ -1,4 +1,4 @@
-# x86 Bootloader
+# TitanBoot — Custom x86 BIOS Bootloader
 
 A custom x86 bootloader with VBE graphics support, E820 memory detection, and Multiboot-style boot information passing.
 
@@ -196,3 +196,7 @@ Kevin Meerts (2025)
 - VBE graphics implementation inspired by VESA specifications
 - E820 memory detection based on OSDev wiki documentation
 - Boot info structure modeled after Multiboot specification
+
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Platform: x86](https://img.shields.io/badge/platform-x86-blueviolet)
+![Stage: Prototype](https://img.shields.io/badge/status-stable-success)
