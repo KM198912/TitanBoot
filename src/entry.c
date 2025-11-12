@@ -499,14 +499,15 @@ void entry_main(boot_info_t* boot_info) {
         serial_printf("\n");
     }
     
-    // Debug: Check if memory from real mode survives
-    serial_printf("Memory test from real mode:\n");
-    serial_printf("  Module load at START of load_config:\n");
-    serial_printf("    0x7000: %x (should be BEEF)\n", *(volatile uint16_t*)0x7000);
-    serial_printf("    0x7002: %x (CAFE=success, DEAD=failed)\n", *(volatile uint16_t*)0x7002);
-    serial_printf("  0x3000 first 64 bytes (loaded BEFORE any other BIOS calls):\n    ");
-    for (int i = 0; i < 64; i++) {
-        uint32_t byte = *(volatile uint8_t*)(0x3000 + i);
+    // Debug: Test 0x4000 instead
+    serial_printf("Memory test - trying 0x4000 instead of 0x3000:\n");
+    serial_printf("  0x7000=%x 0x7002=%x\n", 
+        *(volatile uint16_t*)0x7000, *(volatile uint16_t*)0x7002);
+    serial_printf("  0x4000=%x 0x4002=%x (should be 1234 5678)\n",
+        *(volatile uint16_t*)0x4000, *(volatile uint16_t*)0x4002);
+    serial_printf("  0x4000 first 32 bytes:\n    ");
+    for (int i = 0; i < 32; i++) {
+        uint32_t byte = *(volatile uint8_t*)(0x4000 + i);
         if (byte < 0x10) serial_putchar('0');
         hex_to_string(byte, buffer);
         if (byte < 0x10) {

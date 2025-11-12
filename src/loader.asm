@@ -420,6 +420,21 @@ load_config:
     mov dword [0x7028], 1          ; Sector 1 = loader (we know BIOS can read this!)
     mov dword [0x702C], 0
     
+    ; TEST: Use 0x10000 (64KB) - AFTER the kernel!
+    push es
+    mov ax, 0x1000
+    mov es, ax
+    mov word [es:0], 0x1234
+    mov word [es:2], 0x5678
+    pop es
+    
+    ; Try setting ES to the target segment
+    mov ax, 0x1000
+    mov es, ax
+    
+    ; Update DAP to use 0x10000
+    mov word [0x7026], 0x1000      ; Buffer segment = 0x1000 (address 0x10000)
+    
     mov si, 0x7020
     mov ah, 0x42
     mov dl, [boot_drive]
