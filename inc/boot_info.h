@@ -38,6 +38,15 @@ typedef struct {
     uint32_t reserved;    // Must be zero
 } __attribute__((packed)) module_info_t;
 
+// Boot media info
+typedef struct {
+    uint8_t  drive_number; // BIOS drive number (0x80 = first hard disk, 0xE0 = first CD)
+    uint8_t  boot_type;    // 0 = raw disk, 1 = ISO9660
+    uint16_t reserved;
+    uint32_t iso_root_lba; // Root directory LBA (for ISO9660)
+    uint32_t iso_root_size; // Root directory size (for ISO9660)
+} __attribute__((packed)) boot_media_info_t;
+
 // Main boot information structure
 typedef struct {
     uint32_t flags;       // Bit flags indicating which fields are valid
@@ -62,6 +71,9 @@ typedef struct {
     
     // Framebuffer (flags & 0x1000)
     framebuffer_info_t framebuffer;
+    
+    // Boot media (flags & 0x2000)
+    boot_media_info_t boot_media;
 } __attribute__((packed)) boot_info_t;
 
 // Flag definitions
@@ -71,6 +83,7 @@ typedef struct {
 #define BOOT_INFO_FLAG_MODS     0x00000008  // modules valid
 #define BOOT_INFO_FLAG_MMAP     0x00000040  // E820 memory map valid
 #define BOOT_INFO_FLAG_FB       0x00001000  // framebuffer info valid
+#define BOOT_INFO_FLAG_MEDIA    0x00002000  // boot media info valid
 
 // E820 Memory types
 #define E820_RAM        1  // Usable RAM

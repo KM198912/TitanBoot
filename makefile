@@ -64,8 +64,8 @@ $(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel_entry.o $(C_OBJECTS)
 $(KERNEL_BIN): $(BUILD_DIR)/kernel.elf
 	objcopy -O binary $< $@
 
-# Create disk image (boot + loader + kernel + config)
-$(OS_IMG): $(BOOT_BIN) $(LOADER_BIN) $(KERNEL_BIN) boot.cfg
+# Create disk image (boot + loader + kernel + config + initrd)
+$(OS_IMG): $(BOOT_BIN) $(LOADER_BIN) $(KERNEL_BIN) boot.cfg INITRD.IMG
 	# Create empty image
 	dd if=/dev/zero of=$@ bs=512 count=2880
 	# Write boot sector (sector 1)
@@ -76,11 +76,15 @@ $(OS_IMG): $(BOOT_BIN) $(LOADER_BIN) $(KERNEL_BIN) boot.cfg
 	dd if=$(KERNEL_BIN) of=$@ bs=512 seek=17 conv=notrunc
 	# Write config file (sector 50)
 	dd if=boot.cfg of=$@ bs=512 seek=49 count=1 conv=notrunc
+	# Write INITRD module (sector 100)
+	dd if=INITRD.IMG of=$@ bs=512 seek=99 conv=notrunc
 
 # Create bootable ISO
-$(OS_ISO): $(OS_IMG)
+$(OS_ISO): $(OS_IMG) boot.cfg INITRD.IMG
 	@mkdir -p $(BUILD_DIR)/iso
 	@cp $(OS_IMG) $(BUILD_DIR)/iso/
+	@cp boot.cfg $(BUILD_DIR)/iso/BOOT.CFG
+	@cp INITRD.IMG $(BUILD_DIR)/iso/INITRD.IMG
 	@if command -v genisoimage > /dev/null; then \
 		genisoimage -quiet -V 'CUSTOMOS' -input-charset iso8859-1 -o $@ -b os.img -hide os.img $(BUILD_DIR)/iso; \
 	elif command -v mkisofs > /dev/null; then \

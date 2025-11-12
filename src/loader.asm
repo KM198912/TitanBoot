@@ -13,7 +13,7 @@ BOOT_INFO equ 0x6000       ; Boot info structure at 0x6000 (safe location)
 ; Change these constants to set your desired video mode:
 ; Common resolutions: 640x480, 800x600, 1024x768, 1280x1024, 1920x1080
 ; Set VIDEOMODE=1 to force text mode (disables graphics)
-VIDEOMODE equ 0            ; 0 = try graphics, 1 = force text mode
+VIDEOMODE equ 1            ; 0 = try graphics, 1 = force text mode
 VIDEOWIDTH equ 1024        ; Desired width in pixels
 VIDEOHEIGHT equ 768        ; Desired height in pixels
 VIDEODEPTH equ 32          ; Desired bits per pixel (24 or 32)
@@ -397,14 +397,113 @@ setup_vbe:
     ret
 
 ; Load config file and modules
-; Config file is at sector 2+16+32 = 50 (after boot, loader, and kernel)
-; Format: simple text file with module directives
+; Load config file - supports both raw disk and ISO9660
+; For raw disk: config at sector 50
+; For ISO9660: search for BOOT.CFG in root directory
 load_config:
     mov si, msg_config
     call print_string
     
+    ; Store drive number
+    mov al, [boot_drive]
+    mov [BOOT_INFO + 60], al        ; drive_number
+    
+    ; Try to detect if we're booting from ISO9660
+    ; Check if we can read Primary Volume Descriptor at sector 16
+    mov ah, 0x41
+    mov bx, 0x55AA
+    mov dl, [boot_drive]
+    int 0x13
+    jc .try_raw_disk                ; No LBA support
+    cmp bx, 0xAA55
+    jne .try_raw_disk
+    
+    ; Use LBA to read PVD
+    mov si, iso_check_dap
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc .try_raw_disk
+    
+    ; Check for ISO9660 signature "CD001" at offset 1
+    mov bx, 0x5000 + 1
+    mov di, iso_signature
+    mov cx, 5
+    call compare_string
+    jnc .is_iso
+    
+.try_raw_disk:
+    ; Not ISO or LBA failed, try raw disk approach
+    ; Boot media info already set based on drive number
+    mov word [BOOT_INFO + 62], 0    ; reserved
+    mov dword [BOOT_INFO + 64], 0   ; iso_root_lba (not used)
+    mov dword [BOOT_INFO + 68], 0   ; iso_root_size (not used)
+    or dword [BOOT_INFO], 0x2000    ; Set BOOT_INFO_FLAG_MEDIA
+    
+    ; For raw disk, load INITRD module directly here in real mode
+    ; This is simpler and more reliable than trying later
+    mov word [module_count], 0
+    mov dword [BOOT_INFO + 20], 0   ; mods_count at offset 20
+    mov dword [BOOT_INFO + 24], MODULE_INFO_ADDR  ; mods_addr at offset 24
+    
+    ; Load INITRD.IMG to 0x50000 (320KB) - safe high memory area
+    ; Use simple CHS mode (more compatible)
+    push ds
+    push es
+    
+    ; TEST: Write directly to 0x7000 to see if it survives to protected mode
+    mov word [0x7000], 0xBEEF
+    mov word [0x7002], 0xCAFE
+    
+    ; TEST: Try reading to 0x5000 where config loading works
+    push ds
+    xor ax, ax
+    mov ds, ax
+    
+    ; Read sector 100 to 0x5000 (overwrite config data - we don't need it anymore)
+    mov dword [config_dap + 8], 100    ; Change LBA to 100
+    ; Keep segment at 0x500 (0x5000)
+    
+    mov si, config_dap
+    mov ah, 0x42        ; Extended read
+    mov dl, [boot_drive]
+    int 0x13
+    
+    pop ds
+    
+    jc .read_failed
+    
+    ; Success marker
+    mov word [0x7004], 0x00AA
+    jmp .read_done
+    
+.read_failed:
+    ; Failure marker
+    mov word [0x7004], 0x00FF
+    
+.read_done:
+    
+    ; Restore segments (in reverse order)
+    pop es
+    pop ds
+    
+    ; Create module info entry (pointing to 0x5000 now)
+    mov di, MODULE_INFO_ADDR
+    mov dword [di + 0], 0x5000      ; mod_start at 0x5000
+    mov dword [di + 4], 0x5200      ; mod_end
+    mov dword [di + 8], hardcoded_initrd_name ; string
+    mov dword [di + 12], 0          ; reserved
+    inc word [module_count]
+    
+    ; Update boot_info
+    mov dword [BOOT_INFO + 20], 1   ; mods_count = 1
+    or dword [BOOT_INFO], 0x08      ; Set modules flag
+    
+    jmp .no_config
+    
+.try_raw_disk_with_config:
+    ; Alternative: Try to load config file (requires knowing sector)
     ; Load config file (1 sector) to temporary buffer at 0x5000
-    ; Try LBA first
     mov ah, 0x41
     mov bx, 0x55AA
     mov dl, [boot_drive]
@@ -413,25 +512,58 @@ load_config:
     cmp bx, 0xAA55
     jne .use_chs_config
     
-    ; Use LBA to load config
+    ; Use LBA to load config from sector 50
     mov si, config_dap
     mov ah, 0x42
     mov dl, [boot_drive]
     int 0x13
-    jc .no_config       ; Config load failed, skip modules
+    jc .no_config
     jmp .parse_config
     
 .use_chs_config:
     ; Use CHS to load config
     mov ah, 0x02
-    mov al, 1           ; Read 1 sector
+    mov al, 1
     mov ch, 0
-    mov cl, 50          ; Sector 50
+    mov cl, 50
     mov dh, 0
     mov dl, [boot_drive]
-    mov bx, 0x500       ; Segment
+    mov bx, 0x500
     mov es, bx
-    xor bx, bx          ; Offset 0
+    xor bx, bx
+    int 0x13
+    jc .no_config
+    jmp .parse_config
+    
+.is_iso:
+    ; We have an ISO9660 filesystem
+    mov byte [using_iso], 1
+    mov byte [BOOT_INFO + 61], 1    ; boot_type = ISO9660
+    
+    ; Root directory location is at offset 158 (LSB LBA) in PVD
+    mov eax, [0x5000 + 158]  ; Root directory LBA
+    mov [iso_root_lba], eax
+    mov [BOOT_INFO + 64], eax       ; Store in boot_info
+    
+    mov eax, [0x5000 + 166]  ; Root directory size
+    mov [iso_root_size], eax
+    mov [BOOT_INFO + 68], eax       ; Store in boot_info
+    
+    mov word [BOOT_INFO + 62], 0    ; reserved
+    or dword [BOOT_INFO], 0x2000    ; Set BOOT_INFO_FLAG_MEDIA
+    
+    ; Now search for BOOT.CFG in root directory
+    mov si, filename_bootcfg
+    call iso_find_file
+    jc .no_config           ; File not found
+    
+    ; File found, sector in EAX, load it
+    mov [temp_file_lba], eax
+    mov si, file_load_dap
+    mov eax, [temp_file_lba]
+    mov [file_load_dap + 8], eax
+    mov ah, 0x42
+    mov dl, [boot_drive]
     int 0x13
     jc .no_config
     
@@ -454,6 +586,14 @@ load_config:
     cmp si, 0x5200      ; End of 512-byte buffer
     jge .done_parsing
     
+    ; Check for comment line
+    cmp byte [si], '#'
+    je .not_module      ; Skip comment lines
+    cmp byte [si], 0x0D ; Empty line (CR)
+    je .not_module
+    cmp byte [si], 0x0A ; Empty line (LF)
+    je .not_module
+    
     ; Check for "module" keyword
     mov bx, si
     mov cx, 6
@@ -461,24 +601,90 @@ load_config:
     call compare_string
     jc .not_module
     
-    ; Found "module" - parse: module <start_sector> <num_sectors> <name>
+    ; Found "module" - parse parameters
     add si, 6           ; Skip "module"
     call skip_whitespace
     
-    ; Parse start sector (decimal number)
-    call parse_number
-    mov [temp_start_sector], ax
+    ; Debug: Write marker byte to 0x7000 to show we found a module
+    mov byte [0x7000], 0xAA
     
+    ; Print debug message
+    push si
+    mov si, msg_module_found
+    call print_string
+    pop si
+    
+    ; Check if we're using ISO9660
+    cmp byte [using_iso], 1
+    je .parse_iso_module
+    
+    ; For raw disk: parse "module <start_sector> <num_sectors> <name>"
+.parse_raw_module:
+    ; Parse start sector (decimal)
+    call parse_decimal
+    jc .not_module      ; Parse error
+    mov [temp_start_sector], eax
     call skip_whitespace
     
-    ; Parse number of sectors
-    call parse_number
+    ; Parse num_sectors (decimal)
+    call parse_decimal
+    jc .not_module      ; Parse error
     mov [temp_num_sectors], ax
-    
     call skip_whitespace
     
-    ; Rest of line is module name - store pointer
+    ; Rest of line is the module name
     mov [temp_name_ptr], si
+    
+    ; Find line end to null-terminate name
+    mov di, si
+.find_eol_raw:
+    mov al, [di]
+    cmp al, 0x0D        ; CR
+    je .found_eol_raw
+    cmp al, 0x0A        ; LF
+    je .found_eol_raw
+    cmp al, 0
+    je .found_eol_raw
+    inc di
+    jmp .find_eol_raw
+.found_eol_raw:
+    mov byte [di], 0    ; Null terminate
+    
+    ; Load this module from raw disk
+    call load_single_module
+    jmp .not_module
+    
+.parse_iso_module:
+    ; For ISO: parse "module <filename>"
+    ; Rest of line is the filename
+    mov [temp_name_ptr], si
+    
+    ; Find line end to null-terminate filename
+    mov di, si
+.find_eol:
+    mov al, [di]
+    cmp al, 0x0D        ; CR
+    je .found_eol
+    cmp al, 0x0A        ; LF
+    je .found_eol
+    cmp al, 0
+    je .found_eol
+    inc di
+    jmp .find_eol
+.found_eol:
+    mov byte [di], 0    ; Null terminate
+    
+    ; Look up file in ISO9660 root directory
+    mov si, [temp_name_ptr]
+    call iso_find_file
+    jc .not_module      ; File not found
+    
+    ; File found, EAX = start LBA, ECX = size in bytes
+    mov [temp_start_sector], eax
+    ; Convert size to sectors (round up)
+    add ecx, 511
+    shr ecx, 9          ; Divide by 512
+    mov [temp_num_sectors], cx
     
     ; Load this module
     call load_single_module
@@ -540,10 +746,55 @@ load_single_module:
     
     mov dword [di + 12], 0  ; reserved
     
-    ; Note: Actual module loading from disk requires protected mode
-    ; and setting up proper memory access above 1MB
-    ; For now, we just create the module info structure
-    ; The kernel will need to handle actual module loading
+    ; Now actually load the module data from disk
+    ; We need to load sectors into memory above 1MB
+    ; Strategy: Load to low memory buffer, then copy to high memory
+    
+    push di
+    mov cx, [temp_num_sectors]
+    cmp cx, 0
+    je .no_data_to_load
+    
+    ; Use 0x2000 as temporary buffer (safe area)
+    mov word [module_temp_buffer], 0x2000
+    
+.load_sector_loop:
+    cmp cx, 0
+    je .done_loading
+    
+    ; Load one sector to temp buffer
+    push cx
+    
+    ; Setup DAP for reading
+    mov si, module_load_dap
+    mov eax, [temp_start_sector]
+    mov [module_load_dap + 8], eax
+    
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc .load_error
+    
+    ; Copy from temp buffer (0x2000) to high memory
+    ; Source: DS:SI = 0:0x2000
+    ; Dest: [temp_load_addr]
+    call copy_to_high_memory
+    
+    ; Increment addresses
+    inc dword [temp_start_sector]
+    add dword [temp_load_addr], 512
+    
+    pop cx
+    dec cx
+    jmp .load_sector_loop
+    
+.load_error:
+    pop cx
+    ; Continue anyway - module might be partially loaded
+    
+.done_loading:
+.no_data_to_load:
+    pop di
     
     ; Increment module count
     inc word [module_count]
@@ -578,6 +829,39 @@ skip_to_newline:
     jne .done
     inc si
 .done:
+    ret
+
+; Helper: Parse decimal number from string
+; Input: SI = string pointer
+; Output: EAX = parsed number, SI = pointer after number, CF = error flag
+parse_decimal:
+    push ebx
+    push ecx
+    xor eax, eax        ; Result = 0
+    xor ebx, ebx
+    
+.parse_loop:
+    mov bl, [si]
+    ; Check if digit (0-9)
+    cmp bl, '0'
+    jb .done_ok
+    cmp bl, '9'
+    ja .done_ok
+    
+    ; Convert ASCII to digit: '0' = 0x30, so digit = char - 0x30
+    sub bl, '0'
+    
+    ; result = result * 10 + digit
+    mov ecx, 10
+    mul ecx             ; EAX = EAX * 10 (result in EDX:EAX)
+    add eax, ebx        ; Add digit
+    inc si
+    jmp .parse_loop
+    
+.done_ok:
+    clc                 ; Clear carry = success
+    pop ecx
+    pop ebx
     ret
 
 ; Helper: Compare string
@@ -620,11 +904,165 @@ parse_number:
 .done:
     ret
 
+; ISO9660 file finder
+; Input: SI = filename (null-terminated, uppercase)
+; Output: EAX = start LBA, ECX = file size, CF = 0 on success, CF = 1 on failure
+iso_find_file:
+    pusha
+    
+    ; Load root directory (we'll load 4 sectors = 2KB to be safe)
+    mov eax, [iso_root_lba]
+    mov [iso_dir_dap + 8], eax
+    mov si, iso_dir_dap
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc .not_found
+    
+    ; Search directory entries at 0x3000
+    mov di, 0x3000
+    mov cx, [iso_root_size]
+    cmp cx, 2048        ; Limit to 2KB
+    jbe .size_ok
+    mov cx, 2048
+.size_ok:
+    
+.search_loop:
+    ; Check if we've processed all entries
+    cmp cx, 0
+    jle .not_found
+    
+    ; Get directory record length
+    mov al, [di]
+    cmp al, 0           ; End of directory
+    je .not_found
+    
+    ; Get filename length (at offset 32)
+    movzx bx, byte [di + 32]
+    cmp bx, 0
+    je .next_entry
+    
+    ; Compare filename (starts at offset 33)
+    push si
+    push di
+    push cx
+    
+    lea di, [di + 33]   ; Point to filename in directory
+    mov cx, bx          ; Filename length
+    
+    ; Compare with requested filename
+    push si
+.cmp_loop:
+    cmp cx, 0
+    je .cmp_end
+    mov al, [si]
+    cmp al, 0           ; End of search string?
+    je .cmp_end
+    cmp al, [di]
+    jne .cmp_nomatch
+    inc si
+    inc di
+    dec cx
+    jmp .cmp_loop
+    
+.cmp_end:
+    ; Check if both strings ended
+    cmp byte [si], 0
+    jne .cmp_nomatch
+    cmp cx, 0
+    je .found_match
+    ; Check if remaining is just version (;1)
+    cmp byte [di], ';'
+    je .found_match
+    
+.cmp_nomatch:
+    pop si
+    pop cx
+    pop di
+    pop si
+    
+.next_entry:
+    ; Move to next entry
+    movzx ax, byte [di]
+    add di, ax
+    sub cx, ax
+    jmp .search_loop
+    
+.found_match:
+    pop si              ; Discard saved SI
+    pop cx
+    pop di
+    pop si
+    
+    ; Get file location (LBA) at offset 2 (little-endian)
+    mov eax, [di + 2]
+    mov [temp_file_lba], eax
+    
+    ; Get file size at offset 10
+    mov ecx, [di + 10]
+    mov [temp_file_size], ecx
+    
+    popa
+    mov eax, [temp_file_lba]
+    mov ecx, [temp_file_size]
+    clc
+    ret
+    
+.not_found:
+    popa
+    stc
+    ret
+
 ; Enable A20 gate via keyboard controller
 enable_a20:
     in al, 0x92
     or al, 2
     out 0x92, al
+    ret
+
+; Copy 512 bytes from low memory (0x2000) to high memory address in [temp_load_addr]
+; This uses unreal mode (big real mode) to access high memory
+copy_to_high_memory:
+    pusha
+    push ds
+    push es
+    
+    ; Enable protected mode temporarily
+    cli
+    lgdt [gdt_descriptor]
+    mov eax, cr0
+    or al, 1
+    mov cr0, eax
+    
+    ; Load DS with data segment (allows 4GB access)
+    mov ax, DATA_SEG
+    mov ds, ax
+    
+    ; Back to real mode but with 32-bit segments (unreal mode)
+    and al, 0xFE
+    mov cr0, eax
+    
+    ; Now DS can access all 4GB even in real mode
+    ; Copy 512 bytes from 0x2000 to [temp_load_addr]
+    mov esi, 0x2000
+    mov edi, [temp_load_addr]
+    mov ecx, 128        ; 512 bytes / 4 = 128 dwords
+    
+.copy_loop:
+    mov eax, [ds:esi]
+    mov [ds:edi], eax
+    add esi, 4
+    add edi, 4
+    loop .copy_loop
+    
+    ; Restore segments
+    xor ax, ax
+    mov ds, ax
+    
+    sti
+    pop es
+    pop ds
+    popa
     ret
 
 ; Print string in real mode (before protected mode)
@@ -687,11 +1125,24 @@ vbe_exact_match: db 0
 ; Module loading data
 MODULE_INFO_ADDR equ 0x8000  ; Module info array at 0x8000
 module_count: dw 0
-temp_start_sector: dw 0
+temp_start_sector: dd 0
 temp_num_sectors: dw 0
 temp_load_addr: dd 0
 temp_name_ptr: dd 0
 str_module: db 'module'
+module_temp_buffer: dw 0
+
+; ISO9660 data
+using_iso: db 0
+iso_root_lba: dd 0
+iso_root_size: dd 0
+temp_file_lba: dd 0
+temp_file_size: dd 0
+iso_signature: db 'CD001'
+filename_bootcfg: db 'BOOT.CFG', 0
+msg_raw_skip: db 'Raw disk: module skipped', 0x0D, 0x0A, 0
+msg_module_found: db 'Found module directive', 0x0D, 0x0A, 0
+hardcoded_initrd_name: db 'INITRD.IMG', 0
 
 ; Kernel DAP for LBA reads
 align 4
@@ -710,6 +1161,42 @@ config_dap:
     dw 0                ; Buffer offset
     dw 0x500            ; Buffer segment (0x5000)
     dq 50               ; LBA sector 50 (after boot + loader + kernel)
+
+; ISO9660 Primary Volume Descriptor check DAP
+align 4
+iso_check_dap:
+    db 0x10, 0
+    dw 1                ; Read 1 sector
+    dw 0                ; Offset 0
+    dw 0x500            ; Segment 0x500 (load at 0x5000)
+    dq 16               ; Sector 16 = Primary Volume Descriptor
+
+; ISO9660 directory loading DAP
+align 4
+iso_dir_dap:
+    db 0x10, 0
+    dw 4                ; Read 4 sectors (2KB)
+    dw 0                ; Offset 0
+    dw 0x300            ; Segment 0x300 (load at 0x3000)
+    dq 0                ; LBA (filled at runtime)
+
+; Generic file loading DAP
+align 4
+file_load_dap:
+    db 0x10, 0
+    dw 1                ; Read 1 sector
+    dw 0                ; Offset 0
+    dw 0x500            ; Segment 0x500 (load at 0x5000)
+    dq 0                ; LBA (filled at runtime)
+
+; Module loading DAP (for loading modules to temp buffer)
+align 4
+module_load_dap:
+    db 0x10, 0          ; Size, reserved
+    dw 1                ; Sectors to read (1 sector at a time)
+    dw 0                ; Offset 0
+    dw 0x200            ; Segment 0x200 (load at 0x2000)
+    dq 0                ; LBA (filled at runtime)
 
 ; --- 32-bit Protected Mode ---
 [BITS 32]
