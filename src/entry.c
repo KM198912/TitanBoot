@@ -510,11 +510,11 @@ void entry_main(boot_info_t* boot_info) {
         *(volatile uint16_t*)0x7012);
     serial_printf("    buffer offset=%x segment=%x\n",
         *(volatile uint16_t*)0x7014, *(volatile uint16_t*)0x7016);
-    serial_printf("    LBA=%x:%x\n",
+    serial_printf("    LBA=%x:%x (should be 100/0x64 for INITRD)\n",
         *(volatile uint32_t*)0x701C, *(volatile uint32_t*)0x7018);
-    serial_printf("  0x5000 first 32 bytes:\n    ");
-    for (int i = 0; i < 32; i++) {
-        uint32_t byte = *(volatile uint8_t*)(0x5000 + i);
+    serial_printf("  0x3000 first 64 bytes (should be 'INITRD Test Data...'):\n    ");
+    for (int i = 0; i < 64; i++) {
+        uint32_t byte = *(volatile uint8_t*)(0x3000 + i);
         if (byte < 0x10) serial_putchar('0');
         hex_to_string(byte, buffer);
         if (byte < 0x10) {

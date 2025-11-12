@@ -455,22 +455,27 @@ load_config:
     mov word [0x7000], 0xBEEF
     mov word [0x7002], 0xCAFE
     
-    ; Read sector 100 to 0x1000 instead of 0x5000 (test different address)
-    mov dword [config_dap + 8], 100    ; Change LBA to 100
-    mov word [config_dap + 4], 0      ; Buffer offset = 0
-    mov word [config_dap + 6], 0x100   ; Buffer segment = 0x100 (address 0x1000)
+    ; Create a fresh DAP structure at 0x7020 for reading INITRD
+    mov byte [0x7020], 0x10        ; DAP size
+    mov byte [0x7021], 0           ; Reserved
+    mov word [0x7022], 1           ; Number of sectors
+    mov word [0x7024], 0           ; Buffer offset
+    mov word [0x7026], 0x300       ; Buffer segment (0x3000)
+    mov dword [0x7028], 100        ; LBA low (sector 100)
+    mov dword [0x702C], 0          ; LBA high
     
-    ; Debug: Write DAP values to memory so we can inspect them
-    mov eax, [config_dap + 0]    ; Size + sector count
+    ; Copy DAP to 0x7010 for debugging
+    mov eax, [0x7020]
     mov [0x7010], eax
-    mov eax, [config_dap + 4]    ; Offset + segment
+    mov eax, [0x7024]
     mov [0x7014], eax
-    mov eax, [config_dap + 8]    ; LBA low
+    mov eax, [0x7028]
     mov [0x7018], eax
-    mov eax, [config_dap + 12]   ; LBA high
+    mov eax, [0x702C]
     mov [0x701C], eax
     
-    mov si, config_dap
+    ; Call INT 13h with our fresh DAP
+    mov si, 0x7020
     mov ah, 0x42        ; Extended read
     mov dl, [boot_drive]
     int 0x13
@@ -491,10 +496,10 @@ load_config:
     pop es
     pop ds
     
-    ; Create module info entry (pointing to 0x1000 now)
+    ; Create module info entry (pointing to 0x3000)
     mov di, MODULE_INFO_ADDR
-    mov dword [di + 0], 0x1000      ; mod_start at 0x1000
-    mov dword [di + 4], 0x1200      ; mod_end
+    mov dword [di + 0], 0x3000      ; mod_start at 0x3000
+    mov dword [di + 4], 0x3200      ; mod_end
     mov dword [di + 8], hardcoded_initrd_name ; string
     mov dword [di + 12], 0          ; reserved
     inc word [module_count]
