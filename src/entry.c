@@ -501,18 +501,10 @@ void entry_main(boot_info_t* boot_info) {
     
     // Debug: Check if memory from real mode survives
     serial_printf("Memory test from real mode:\n");
-    serial_printf("  0x7000: %x %x (read status: %x)\n", 
-        *(volatile uint16_t*)0x7000, *(volatile uint16_t*)0x7002, *(volatile uint16_t*)0x7004);
-    serial_printf("  DAP struct:\n");
-    serial_printf("    size=%x reserved=%x\n",
-        *(volatile uint8_t*)0x7010, *(volatile uint8_t*)0x7011);
-    serial_printf("    sectors=%x\n",
-        *(volatile uint16_t*)0x7012);
-    serial_printf("    buffer offset=%x segment=%x\n",
-        *(volatile uint16_t*)0x7014, *(volatile uint16_t*)0x7016);
-    serial_printf("    LBA=%x:%x (should be 100/0x64 for INITRD)\n",
-        *(volatile uint32_t*)0x701C, *(volatile uint32_t*)0x7018);
-    serial_printf("  0x3000 first 64 bytes (should be 'INITRD Test Data...'):\n    ");
+    serial_printf("  Module load at START of load_config:\n");
+    serial_printf("    0x7000: %x (should be BEEF)\n", *(volatile uint16_t*)0x7000);
+    serial_printf("    0x7002: %x (CAFE=success, DEAD=failed)\n", *(volatile uint16_t*)0x7002);
+    serial_printf("  0x3000 first 64 bytes (loaded BEFORE any other BIOS calls):\n    ");
     for (int i = 0; i < 64; i++) {
         uint32_t byte = *(volatile uint8_t*)(0x3000 + i);
         if (byte < 0x10) serial_putchar('0');

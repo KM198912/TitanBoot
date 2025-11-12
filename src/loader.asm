@@ -404,6 +404,38 @@ load_config:
     mov si, msg_config
     call print_string
     
+    ; TEST: Load module FIRST, before ANY other BIOS calls
+    ; Try to read sector 100 to 0x3000 using LBA Extended Read
+    push es
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    
+    ; Create DAP at 0x7020 - read sector 1 (loader sector, KNOWN to work)
+    mov byte [0x7020], 0x10
+    mov byte [0x7021], 0
+    mov word [0x7022], 1
+    mov word [0x7024], 0
+    mov word [0x7026], 0x300
+    mov dword [0x7028], 1          ; Sector 1 = loader (we know BIOS can read this!)
+    mov dword [0x702C], 0
+    
+    mov si, 0x7020
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    
+    ; Save status
+    mov word [0x7000], 0xBEEF
+    jc .module_load_failed
+    mov word [0x7002], 0xCAFE
+    jmp .module_load_done
+.module_load_failed:
+    mov word [0x7002], 0xDEAD
+.module_load_done:
+    pop es
+    ; END TEST
+    
     ; Store drive number
     mov al, [boot_drive]
     mov [BOOT_INFO + 60], al        ; drive_number
@@ -455,30 +487,31 @@ load_config:
     mov word [0x7000], 0xBEEF
     mov word [0x7002], 0xCAFE
     
-    ; Create a fresh DAP structure at 0x7020 for reading INITRD
-    mov byte [0x7020], 0x10        ; DAP size
-    mov byte [0x7021], 0           ; Reserved
-    mov word [0x7022], 1           ; Number of sectors
-    mov word [0x7024], 0           ; Buffer offset
-    mov word [0x7026], 0x300       ; Buffer segment (0x3000)
-    mov dword [0x7028], 100        ; LBA low (sector 100)
-    mov dword [0x702C], 0          ; LBA high
+    ; Try legacy CHS read instead of LBA Extended Read
+    ; Sector 100 = Cylinder 0, Head 1, Sector 37 (for floppy geometry)
+    ; Actually, for HD geometry (63 sectors/track), sector 100 = C=0, H=1, S=38
+    push es
+    mov ax, 0x300      ; ES:BX = 0x3000
+    mov es, ax
+    xor bx, bx
     
-    ; Copy DAP to 0x7010 for debugging
-    mov eax, [0x7020]
-    mov [0x7010], eax
-    mov eax, [0x7024]
-    mov [0x7014], eax
-    mov eax, [0x7028]
-    mov [0x7018], eax
-    mov eax, [0x702C]
-    mov [0x701C], eax
-    
-    ; Call INT 13h with our fresh DAP
-    mov si, 0x7020
-    mov ah, 0x42        ; Extended read
+    mov ah, 0x02       ; Read sectors
+    mov al, 1          ; Read 1 sector
+    mov ch, 1          ; Cylinder 1
+    mov cl, 36         ; Sector 36 (sector 100 = 1*63 + 36 + 1)
+    mov dh, 1          ; Head 1
     mov dl, [boot_drive]
     int 0x13
+    
+    pop es
+    
+    ; Store status for debugging
+    jc .chs_failed
+    mov word [0x7004], 0x00AA  ; Success
+    jmp .chs_done
+.chs_failed:
+    mov word [0x7004], 0x00FF  ; Failed
+.chs_done:
     
     jc .read_failed
     
