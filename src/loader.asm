@@ -455,21 +455,25 @@ load_config:
     mov word [0x7000], 0xBEEF
     mov word [0x7002], 0xCAFE
     
-    ; TEST: Try reading to 0x5000 where config loading works
-    push ds
-    xor ax, ax
-    mov ds, ax
-    
-    ; Read sector 100 to 0x5000 (overwrite config data - we don't need it anymore)
+    ; Read sector 100 to 0x1000 instead of 0x5000 (test different address)
     mov dword [config_dap + 8], 100    ; Change LBA to 100
-    ; Keep segment at 0x500 (0x5000)
+    mov word [config_dap + 4], 0      ; Buffer offset = 0
+    mov word [config_dap + 6], 0x100   ; Buffer segment = 0x100 (address 0x1000)
+    
+    ; Debug: Write DAP values to memory so we can inspect them
+    mov eax, [config_dap + 0]    ; Size + sector count
+    mov [0x7010], eax
+    mov eax, [config_dap + 4]    ; Offset + segment
+    mov [0x7014], eax
+    mov eax, [config_dap + 8]    ; LBA low
+    mov [0x7018], eax
+    mov eax, [config_dap + 12]   ; LBA high
+    mov [0x701C], eax
     
     mov si, config_dap
     mov ah, 0x42        ; Extended read
     mov dl, [boot_drive]
     int 0x13
-    
-    pop ds
     
     jc .read_failed
     
@@ -487,10 +491,10 @@ load_config:
     pop es
     pop ds
     
-    ; Create module info entry (pointing to 0x5000 now)
+    ; Create module info entry (pointing to 0x1000 now)
     mov di, MODULE_INFO_ADDR
-    mov dword [di + 0], 0x5000      ; mod_start at 0x5000
-    mov dword [di + 4], 0x5200      ; mod_end
+    mov dword [di + 0], 0x1000      ; mod_start at 0x1000
+    mov dword [di + 4], 0x1200      ; mod_end
     mov dword [di + 8], hardcoded_initrd_name ; string
     mov dword [di + 12], 0          ; reserved
     inc word [module_count]

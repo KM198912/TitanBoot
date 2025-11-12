@@ -155,3 +155,35 @@ jobs:
           cat qemu-iso.log
           exit 1
         fi
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: os-iso
+        path: release/
+
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ github.run_number }}
+        name: TitanBoot Build #${{ github.run_number }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload ISO to release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          release/os.iso
+          release/os.img
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

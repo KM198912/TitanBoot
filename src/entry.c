@@ -503,6 +503,15 @@ void entry_main(boot_info_t* boot_info) {
     serial_printf("Memory test from real mode:\n");
     serial_printf("  0x7000: %x %x (read status: %x)\n", 
         *(volatile uint16_t*)0x7000, *(volatile uint16_t*)0x7002, *(volatile uint16_t*)0x7004);
+    serial_printf("  DAP struct:\n");
+    serial_printf("    size=%x reserved=%x\n",
+        *(volatile uint8_t*)0x7010, *(volatile uint8_t*)0x7011);
+    serial_printf("    sectors=%x\n",
+        *(volatile uint16_t*)0x7012);
+    serial_printf("    buffer offset=%x segment=%x\n",
+        *(volatile uint16_t*)0x7014, *(volatile uint16_t*)0x7016);
+    serial_printf("    LBA=%x:%x\n",
+        *(volatile uint32_t*)0x701C, *(volatile uint32_t*)0x7018);
     serial_printf("  0x5000 first 32 bytes:\n    ");
     for (int i = 0; i < 32; i++) {
         uint32_t byte = *(volatile uint8_t*)(0x5000 + i);
